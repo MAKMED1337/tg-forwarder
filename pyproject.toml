@@ -1,0 +1,34 @@
+[project]
+name = "Telegram-Forwarder"
+version = "0.1.0"
+description = "Forwards telegram messages from one chat to another"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "camel-converter>=5.0.0",
+    "markdown-it-py[linkify,plugins]>=4.0.0",
+    "markdown-to-data>=2.0.1",
+    "marko>=2.2.1",
+    "mistune>=3.1.4",
+    "pydantic>=2.12.4",
+    "pydantic-settings>=2.12.0",
+    "requests>=2.32.5",
+    "telethon>=1.42.0",
+]
+
+[tool.mypy]
+allow_redefinition = true
+allow_redefinition_new = true
+local_partial_types = true
+follow_untyped_imports = true
+
+[[tool.mypy.overrides]]
+module = ["telethon.*"]
+implicit_optional = true
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.1",
+    "ruff>=0.14.10",
+    "types-requests>=2.32.4.20250913",
+]
