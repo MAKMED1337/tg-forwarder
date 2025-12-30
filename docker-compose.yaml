@@ -1,0 +1,11 @@
+services:
+  bot:
+    build: .
+    env_file:
+      - .env/bot.env
+      - .env/forward.env
+    volumes:
+      - sessions:/app/.sessions
+
+volumes:
+  sessions:
