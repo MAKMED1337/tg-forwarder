@@ -1,64 +1,67 @@
 import asyncio
+import functools
 import logging
 import signal
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
+from typing import TYPE_CHECKING
 
 from telethon.events import NewMessage
 
 from bot import bot
 from bot import start as start_bot
-from config import forward_settings
+from config import load_config
+from helper import create_logger
+from logic import Batcher
+
+if TYPE_CHECKING:
+    from telethon.tl.types import Channel
 
 shutting_down = asyncio.Event()
 
 
-events_buffer: list[tuple[NewMessage.Event, datetime]] = []
-events_lock = asyncio.Lock()
-background_tasks: set[asyncio.Task] = set()
+config = load_config()
 
 
-logger = logging.getLogger('main')
+channel_batchers: dict[str, Batcher] = {}
 
 
-async def process_batch() -> None:
-    async with events_lock:
-        if not events_buffer:
-            return
+async def process_events(from_: str, events: list[NewMessage.Event]) -> None:
+    logger = logging.getLogger(from_)
 
-        batch = events_buffer.copy()
-        events_buffer.clear()
+    ids = [event.id for event in events]
+    logger.info('Processing batch for: %s', ids)
+    to = [i.to for i in config.forwards if i.from_ == from_]
 
-    ids = [event.id for event, _ in batch]
-    logger.info('Processing batch: %s', ids)
-    await bot.forward_messages(forward_settings.to, ids, forward_settings.from_)
-
-
-async def schedule_processing(delay: timedelta) -> None:
-    async def wait_and_process(delay: timedelta) -> None:
-        await asyncio.sleep(delay.total_seconds())
-        finished = datetime.now(tz=UTC)
-
-        async with events_lock:
-            if not events_buffer or max(received for _, received in events_buffer) > finished + delay:
-                logger.info('Scheduled processing skipped, finished time: %s, buffer: %s', finished, events_buffer)
-                return
-
-        await process_batch()
-
-    task = asyncio.create_task(wait_and_process(delay))
-    background_tasks.add(task)
-    task.add_done_callback(background_tasks.discard)
+    for username in to:
+        logger.info('Forwarding to %s', username)
+        await bot.forward_messages(username, ids, from_)
 
 
-@bot.on(NewMessage(chats=[forward_settings.from_]))
+def get_batcher(username: str) -> Batcher:
+    if batcher := channel_batchers.get(username):
+        return batcher
+
+    logger = logging.getLogger(username)
+    func = functools.partial(process_events, username)
+    ret = channel_batchers[username] = Batcher(func, logger)
+    return ret
+
+
+@bot.on(NewMessage(incoming=True))
 async def handle(event: NewMessage.Event) -> None:
-    logger.info('New message')
+    chat: Channel = await event.get_chat()
+
+    source = chat.username
+    if source is None or source not in (i.from_ for i in config.forwards):
+        return
+
+    logging.getLogger(source).info('New message')
     if shutting_down.is_set():
         return
 
-    async with events_lock:
-        events_buffer.append((event, datetime.now(tz=UTC)))
-    await schedule_processing(delay=timedelta(milliseconds=forward_settings.debounce_time_ms))
+    batcher = get_batcher(source)
+    await batcher.append(event)
+    batcher.schedule_processing(delay=timedelta(milliseconds=config.debounce_time_ms))
 
 
 def setup_signals(loop: asyncio.AbstractEventLoop) -> None:
@@ -70,22 +73,36 @@ async def shutdown() -> None:
     if shutting_down.is_set():
         return
 
-    logger.info('Shutdown')
+    logging.getLogger('main').info('Shutdown')
     shutting_down.set()
 
-    await process_batch()
+    for batcher in channel_batchers.values():
+        await batcher.process_batch()
     await bot.disconnect()
 
 
 async def main() -> None:
-    logging.basicConfig(format='[%(asctime)s] %(levelname)s: %(message)s', datefmt='%d.%m.%Y %H:%M:%S')
-
+    datefmt = '%d.%m.%Y %H:%M:%S'
+    logger = create_logger(
+        'main', format='[%(asctime)s] %(levelname)s: %(message)s', level=logging.INFO, datefmt=datefmt
+    )
     logger.setLevel(logging.INFO)
+
+    # Config loggers to print corresponding from username
+    for forward_config in config.forwards:
+        # We can configure the same logger multiple times, but it should not do any harm
+        create_logger(
+            forward_config.from_,
+            level=logging.INFO,
+            format=f'[%(asctime)s] [@{forward_config.from_}] %(levelname)s: %(message)s',
+            datefmt=datefmt,
+        )
 
     loop = asyncio.get_running_loop()
     setup_signals(loop)
 
     logger.info('Start')
+
     await start_bot()
     await bot.run_until_disconnected()
 

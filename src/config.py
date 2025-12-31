@@ -1,13 +1,18 @@
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pathlib import Path
+
+from pydantic import BaseModel, Field, TypeAdapter
 
 
-class ForwardSetting(BaseSettings):
-    model_config = SettingsConfigDict(case_sensitive=False)
+class Forward(BaseModel):
+    from_: str = Field(alias='from')
+    to: str
 
-    from_: str = Field(alias='from')  # should be a username, not an id
-    to: str  # should be a username, not an id
+
+class Config(BaseModel):
     debounce_time_ms: int
+    forwards: list[Forward]
 
 
-forward_settings = ForwardSetting()  # type: ignore[call-arg]
+def load_config(path: Path = Path('.env/forward.json')) -> Config:
+    ta = TypeAdapter(Config)
+    return ta.validate_json(path.read_bytes(), strict=True)

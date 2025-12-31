@@ -17,7 +17,6 @@ ignore = [
     "TD",
     "ISC001", # ruff format requires this
     "S101",
-    "T201",   # print
 ]
 
 # Allow autofix for all enabled rules (when `--fix`) is provided.
