@@ -9,7 +9,7 @@ class Forward(BaseModel):
 
 
 class Config(BaseModel):
-    debounce_time_ms: int
+    debounce_time_ms: int = 1000
     forwards: list[Forward]
 
 
